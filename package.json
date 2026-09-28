@@ -1,6 +1,6 @@
 {
   "name": "anontranslator-ii",
-  "version": "1.3.8",
+  "version": "1.3.9",
   "private": true,
   "description": "AnonTranslator II Chrome extension for Japanese reading and general text translation.",
   "type": "commonjs",

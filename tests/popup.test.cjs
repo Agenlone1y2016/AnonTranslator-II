@@ -4,6 +4,7 @@ const { JSDOM } = require('jsdom');
 
 const html = fs.readFileSync('popup.html', 'utf8');
 const source = fs.readFileSync('src/popup.js', 'utf8');
+const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
 const defaults = JSON.parse(fs.readFileSync('config/defaultSettings.json', 'utf8'));
 
 async function loadPopup({ settings = {}, failLoad = false, deferLoad = false } = {}) {
@@ -18,7 +19,7 @@ async function loadPopup({ settings = {}, failLoad = false, deferLoad = false } 
   window.chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({ version: '1.3.8' }),
+      getManifest: () => manifest,
       sendMessage(_message, callback) {
         completeLoad = () => callback(failLoad ? { error: 'worker unavailable' } : { ...store });
         if (!deferLoad) completeLoad();
