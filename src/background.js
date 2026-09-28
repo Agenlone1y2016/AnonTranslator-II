@@ -5,6 +5,42 @@ const DEEPSEEK_TIMEOUT_MS = 45000;
 const MAX_TRANSLATION_CHARACTERS = 20000;
 const DEEPSEEK_MODELS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
 let defaultSettingsPromise = null;
+let toolbarStateRevision = 0;
+
+function updateToolbarStatus(isPluginOn) {
+  const handleUpdate = () => {
+    if (chrome.runtime.lastError) {
+      console.error('[AnonTranslator II] Failed to update toolbar status:', chrome.runtime.lastError.message);
+    }
+  };
+  chrome.action.setBadgeBackgroundColor({ color: isPluginOn ? '#15803D' : '#6B7280' }, handleUpdate);
+  chrome.action.setBadgeText({ text: isPluginOn ? 'ON' : 'OFF' }, handleUpdate);
+  chrome.action.setTitle({ title: `AnonTranslator II — ${isPluginOn ? 'ON（已开启）' : 'OFF（已关闭）'}` }, handleUpdate);
+}
+
+function restoreToolbarStatus() {
+  const revision = ++toolbarStateRevision;
+  chrome.storage.sync.get(['pluginSwitch'], settings => {
+    if (chrome.runtime.lastError) {
+      console.error('[AnonTranslator II] Failed to load toolbar status:', chrome.runtime.lastError.message);
+      return;
+    }
+    // 初始化读取期间发生切换时，以最新的存储变更为准。
+    if (revision !== toolbarStateRevision) return;
+    updateToolbarStatus(Boolean(settings.pluginSwitch));
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync' || !changes.pluginSwitch) return;
+  toolbarStateRevision += 1;
+  updateToolbarStatus(Boolean(changes.pluginSwitch.newValue));
+});
+
+chrome.runtime.onStartup.addListener(restoreToolbarStatus);
+chrome.runtime.onInstalled.addListener(restoreToolbarStatus);
+// Service worker 每次启动时恢复角标，弹窗关闭后仍保持更新。
+restoreToolbarStatus();
 
 function loadDefaultSettings() {
   if (!defaultSettingsPromise) {

@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('pluginSwitch').addEventListener('change', event => {
-    updateBackgroundImage(event.target.checked);
+    persistPluginSwitch(event.target.checked);
   });
 
   document.getElementById('translationMode').addEventListener('change', event => {
@@ -75,6 +75,24 @@ function persistTranslationMode(mode) {
   });
 }
 
+function persistPluginSwitch(isPluginOn) {
+  const pluginSwitch = document.getElementById('pluginSwitch');
+  pluginSwitch.disabled = true;
+  updateBackgroundImage(isPluginOn);
+  // 只保存开关，避免顺带提交其他尚未保存的设置。
+  chrome.storage.sync.set({ pluginSwitch: isPluginOn }, () => {
+    pluginSwitch.disabled = false;
+    if (chrome.runtime.lastError) {
+      console.error('[AnonTranslator II] Failed to switch plugin:', chrome.runtime.lastError.message);
+      pluginSwitch.checked = !isPluginOn;
+      updateBackgroundImage(!isPluginOn);
+      showSaveState('切换失败', 'error');
+      return;
+    }
+    showSaveState(isPluginOn ? '已开启' : '已关闭', 'saved');
+  });
+}
+
 function loadSettings() {
   chrome.runtime.sendMessage({ type: 'getSettings' }, settings => {
     if (chrome.runtime.lastError || !settings || settings.error) {
@@ -89,12 +107,14 @@ function loadSettings() {
           ...syncSettings
         };
         applySettingsToForm(fallbackSettings);
+        document.getElementById('pluginSwitch').disabled = false;
         updateBackgroundImage(Boolean(syncSettings.pluginSwitch));
         updateTranslationModeHint(fallbackSettings.translationMode);
       });
       return;
     }
     applySettingsToForm(settings);
+    document.getElementById('pluginSwitch').disabled = false;
     updateBackgroundImage(Boolean(settings.pluginSwitch));
     updateTranslationModeHint(settings.translationMode);
   });
@@ -179,6 +199,7 @@ function saveSettings() {
 
   Array.from(elements).forEach(element => {
     if (!element.id || element.classList.contains('tab') || element.tagName === 'BUTTON') return;
+    if (element.id === 'pluginSwitch') return;
 
     const target = LOCAL_ONLY_FIELDS.has(element.id) ? localSettings : syncSettings;
     let value = getElementValue(element);
@@ -206,7 +227,6 @@ function saveSettings() {
         showSaveState('error', 'error');
       } else {
         showSaveState('√', 'saved');
-        updateBackgroundImage(Boolean(syncSettings.pluginSwitch));
       }
     }
   };

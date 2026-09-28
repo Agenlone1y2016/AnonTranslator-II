@@ -554,6 +554,18 @@ function translationTextOf(tag) {
     assert.equal(page.translateCalls.length, 0);
     assert.equal(page.document.querySelector('.anontranslator-translation'), null);
     assert.equal(page.document.getElementById('anontranslator-copy-notification'), null);
+
+    // popup 保存开关后，当前页面通过 storage 事件立即启停，无需刷新。
+    page.changeSyncSetting('pluginSwitch', true);
+    click(page.window, page.document.getElementById('off1'));
+    await flush();
+    assert.equal(page.translateCalls.length, 1);
+    assert.ok(page.document.querySelector('.anontranslator-translation'));
+    page.changeSyncSetting('pluginSwitch', false);
+    assert.equal(page.document.querySelector('.anontranslator-translation'), null);
+    click(page.window, page.document.getElementById('off1'));
+    await flush();
+    assert.equal(page.translateCalls.length, 1, 'turning off should stop translation immediately');
     page.dom.window.close();
   }
 

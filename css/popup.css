@@ -123,6 +123,7 @@ input[type="number"] {
 }
 .save.saved {
   background-color: green;
+  font-size: 18px;
   transition: none; /* 瞬间变绿，不渐变 */
 }
 
@@ -153,6 +154,10 @@ input[type="number"] {
   opacity: 0;
   width: 0;
   height: 0;
+}
+.switch input:disabled + .slider {
+  cursor: wait;
+  opacity: 0.65;
 }
 /* 自定义滑块 */
 .slider {

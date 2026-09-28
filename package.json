@@ -5,7 +5,7 @@
   "description": "AnonTranslator II Chrome extension for Japanese reading and general text translation.",
   "type": "commonjs",
   "scripts": {
-    "test": "node tests/project.test.cjs && node tests/content.test.cjs && node tests/background.test.cjs"
+    "test": "node tests/project.test.cjs && node tests/popup.test.cjs && node tests/content.test.cjs && node tests/background.test.cjs"
   },
   "engines": {
     "node": ">=20"

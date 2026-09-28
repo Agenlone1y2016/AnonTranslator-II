@@ -3,16 +3,29 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const source = fs.readFileSync('src/background.js', 'utf8');
+const toolbar = {};
+const storageReads = [];
+const storageListeners = [];
+const startupListeners = [];
+const installedListeners = [];
+let toolbarUpdates = 0;
 const chrome = {
+  action: {
+    setBadgeText({ text }, callback) { toolbar.text = text; toolbarUpdates += 1; callback(); },
+    setBadgeBackgroundColor({ color }, callback) { toolbar.color = color; callback(); },
+    setTitle({ title }, callback) { toolbar.title = title; callback(); }
+  },
   runtime: {
     lastError: null,
     getURL: path => path,
-    onInstalled: { addListener() {} },
+    onInstalled: { addListener(listener) { installedListeners.push(listener); } },
+    onStartup: { addListener(listener) { startupListeners.push(listener); } },
     onMessage: { addListener() {} }
   },
   storage: {
+    onChanged: { addListener(listener) { storageListeners.push(listener); } },
     sync: {
-      get() {},
+      get(_keys, callback) { storageReads.push(callback); },
       set() {},
       remove() {}
     },
@@ -36,6 +49,40 @@ vm.runInContext(source, context, { filename: 'src/background.js' });
 function evaluate(expression) {
   return vm.runInContext(expression, context);
 }
+
+// 未保存开关时默认关闭；启动时恢复已保存状态。
+storageReads.shift()({});
+assert.equal(toolbar.text, 'OFF');
+assert.equal(toolbar.color, '#6B7280');
+assert.match(toolbar.title, /OFF（已关闭）/);
+startupListeners.forEach(listener => listener());
+storageReads.shift()({ pluginSwitch: true });
+assert.equal(toolbar.text, 'ON');
+assert.equal(toolbar.color, '#15803D');
+assert.match(toolbar.title, /ON（已开启）/);
+
+// 开关由 popup 或 Chrome Sync 修改时，后台独立更新工具栏。
+const notifyStorage = (changes, area = 'sync') => {
+  storageListeners.forEach(listener => listener(changes, area));
+};
+notifyStorage({ pluginSwitch: { newValue: false } });
+assert.equal(toolbar.text, 'OFF');
+notifyStorage({ pluginSwitch: { newValue: true } });
+assert.equal(toolbar.text, 'ON');
+const previousUpdates = toolbarUpdates;
+notifyStorage({ deepseekApiKey: { newValue: 'local-key' } }, 'local');
+notifyStorage({ pluginSwitch: { newValue: false } }, 'local');
+notifyStorage({ google: { newValue: true } });
+assert.equal(toolbarUpdates, previousUpdates, 'unrelated changes must not change the badge');
+notifyStorage({ pluginSwitch: { oldValue: true } });
+assert.equal(toolbar.text, 'OFF', 'removing the setting should restore the default OFF state');
+
+// 延迟返回的旧读取不能覆盖用户刚切换的新状态。
+evaluate('restoreToolbarStatus()');
+notifyStorage({ pluginSwitch: { newValue: true } });
+storageReads.shift()({ pluginSwitch: false });
+assert.equal(toolbar.text, 'ON');
+assert.ok(installedListeners.includes(evaluate('restoreToolbarStatus')));
 
 assert.equal(evaluate("normalizeLanguageForGoogle('ZH', false)"), 'zh-CN');
 assert.equal(evaluate("normalizeLanguageForGoogle('', true)"), 'auto');
