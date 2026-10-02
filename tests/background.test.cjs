@@ -189,6 +189,22 @@ assert.throws(
     /输出达到长度上限/
   );
 
+  // 安装或升级时补齐缺失的默认值，并清理已改为内部处理的旧配置。
+  const syncSets = [];
+  const syncRemovals = [];
+  chrome.storage.sync.set = (values, callback) => { syncSets.push({ ...values }); callback?.(); };
+  chrome.storage.sync.remove = (keys, callback) => { syncRemovals.push([...keys]); callback?.(); };
+  context.fetch = async () => new Response(
+    JSON.stringify({ pluginSwitch: false, copy: true }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
+  const upgradeListener = installedListeners.find(listener => listener !== evaluate('restoreToolbarStatus'));
+  upgradeListener();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  storageReads.shift()({ pluginSwitch: true, sentenceThreshold: 50, symbolPairs: '「」' });
+  assert.deepEqual(syncSets, [{ copy: true }]);
+  assert.deepEqual(syncRemovals, [['symbolPairs', 'sentenceThreshold']]);
+
   console.log('background tests passed');
 })().catch(error => {
   console.error(error);

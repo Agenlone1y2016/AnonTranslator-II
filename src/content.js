@@ -25,7 +25,6 @@ const strictReadableSelector = [
     'li', 'blockquote', 'pre', 'figcaption', 'dt', 'dd', 'td', 'th',
     '[role="paragraph"]'
 ].join(',');
-const readableSelector = `${strictReadableSelector},div,article,section,main`;
 const whitespaceCharacterPattern = /\s/u;
 const extensionClasses = {
     translation: 'anontranslator-translation',
@@ -47,8 +46,8 @@ const extensionClasses = {
 // 当前鼠标预选的文本块
 let currentHoveredBlock = null;
 
-// 防止同一文档被重复绑定监听器
-const initializedDocuments = new WeakSet();
+// 页面监听器只绑定一次，之后由 pluginEnabled 控制是否生效。
+let listenersAttached = false;
 
 // 保存插件覆盖前的局部样式，避免清空网页原有的整个 style 属性
 const originalVisualStyles = new WeakMap();
@@ -92,8 +91,9 @@ function ensureCopyNotification() {
     return copyNotification;
 }
 
-const translationCachePrefix = 'anontranslator.translationCache.v2:';
-const legacyTranslationCachePrefixes = ['anontranslator.translationCache.v1:'];
+// 各版本缓存键共用根前缀；只有 v2 是当前格式，其余在清理时删除。
+const translationCacheRootPrefix = 'anontranslator.translationCache.';
+const translationCachePrefix = `${translationCacheRootPrefix}v2:`;
 const translationCacheVersion = 2;
 const translationCacheMaxEntries = 500;
 const translationCachePruneIntervalMs = 5 * 60 * 1000;
@@ -107,12 +107,27 @@ function initializeSettings(data) {
     extensionSettings.translationMode = normalizeTranslationMode(extensionSettings.translationMode);
     pluginEnabled = Boolean(extensionSettings.pluginSwitch);
     if (pluginEnabled) {
-        // 启动鼠标监听器
-        addMouseListener(document);
-        if (!isNovelMode()) {
-            scheduleGeneralSelectionUpdate();
-        }
+        enablePlugin();
     }
+}
+
+function enablePlugin() {
+    attachListeners();
+    if (!isNovelMode()) {
+        scheduleGeneralSelectionUpdate();
+    }
+}
+
+// 关闭插件时移除所有插件插入的内容，恢复网页原样。
+function disablePlugin() {
+    clearGeneralTranslationUi();
+    Array.from(activeTranslationDivs).forEach(removeTranslationDiv);
+    clearNovelInteractionState();
+    restoreImageCursor(currentHoveredImage);
+    currentHoveredImage = null;
+    clearTimeout(notificationTimeout);
+    copyNotification?.classList.remove('show');
+    copyNotification?.remove();
 }
 
 // 优先从后台读取“默认值 + 已保存值”，后台不可用时再退回同步存储。
@@ -150,24 +165,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
     pluginEnabled = Boolean(extensionSettings.pluginSwitch);
     if (pluginEnabled) {
-        addMouseListener(document);
-        if (!isNovelMode()) {
-            scheduleGeneralSelectionUpdate();
-        }
+        enablePlugin();
     } else {
-        clearGeneralTranslationUi();
-        Array.from(activeTranslationDivs).forEach(removeTranslationDiv);
-        clearNovelInteractionState();
-        restoreImageCursor(currentHoveredImage);
-        currentHoveredImage = null;
-        if (notificationTimeout) {
-            clearTimeout(notificationTimeout);
-            notificationTimeout = null;
-        }
-        if (copyNotification) {
-            copyNotification.classList.remove('show');
-            copyNotification.remove();
-        }
+        disablePlugin();
     }
 });
 
@@ -176,18 +176,20 @@ function normalizeTranslationMode(mode) {
 }
 
 function isNovelMode() {
-    return normalizeTranslationMode(extensionSettings.translationMode) === 'novel';
+    return extensionSettings.translationMode !== 'general';
 }
 
 
 /* ------------------------------------------------------------文本模块 */
 
-// 分割成列表
-function parseStringToArray(str) {
-    return typeof str === 'string'
-        ? str.split('/').map(value => value.trim()).filter(Boolean)
-        : [];
-}
+// 整段被同一对括号或引号包住时，复制和翻译前去掉，译文再原样包回。
+const enclosingSymbolPairs = [
+    ['「', '」'], ['『', '』'], ['（', '）'], ['(', ')'], ['【', '】'],
+    ['《', '》'], ['〈', '〉'], ['“', '”'], ['‘', '’'], ['〔', '〕']
+];
+// 句末标点；紧跟其后的连续标点、闭括号和空白都归入同一句。
+const sentenceEndings = new Set(Array.from('。！？!?｡‼⁉'));
+const closingBrackets = new Set(Array.from('」』）)】》〉”’〕'));
 
 function getElementTextLength(element, maxLength) {
     if (!(element instanceof Element)) return 0;
@@ -301,7 +303,7 @@ function findReadableBlockFromEvent(event) {
     return findReadableBlockFromNode(event.target, eventPath);
 }
 
-function applyOutline(tag, width, style, color, radius) {
+function applyOutline(tag, color) {
     if (!originalVisualStyles.has(tag)) {
         originalVisualStyles.set(tag, {
             outline: tag.style.outline,
@@ -309,8 +311,8 @@ function applyOutline(tag, width, style, color, radius) {
         });
     }
 
-    tag.style.outline = `${width} ${style} ${color}`;
-    tag.style.borderRadius = radius;
+    tag.style.outline = `${extensionSettings.borderWidth} ${extensionSettings.borderStyle} ${color}`;
+    tag.style.borderRadius = extensionSettings.borderRadius;
 }
 
 function restoreOutline(tag) {
@@ -331,7 +333,7 @@ function restoreOutline(tag) {
 }
 
 function getDirectTranslationDivs(tag) {
-    return Array.from(tag?.children || []).filter(child => {
+    return Array.from(tag.children).filter(child => {
         return child.classList.contains(extensionClasses.translation);
     });
 }
@@ -347,27 +349,13 @@ function canSafelySplitSentences(tag) {
     });
 }
 
-function cloneContentForText(source) {
-    const container = document.createElement('div');
-    if (source instanceof Element) {
-        const clone = source.cloneNode(true);
-        while (clone.firstChild) {
-            container.appendChild(clone.firstChild);
-        }
-    } else {
-        // 保留兼容入口；扩展自身的调用统一传入 DOM 节点，避免重新解析网页 HTML。
-        container.textContent = String(source ?? '');
-    }
-    return container;
-}
-
 // 只有当首尾符号是同一对（中途没有先闭合）时才视为包裹整段，
 // 避免「A」「B」这类多段引号被误剥离首尾字符。
-function findEnclosingSymbolPair(text, symbolPairs) {
+function findEnclosingSymbolPair(text) {
     const characters = Array.from(text);
     if (characters.length < 2) return null;
 
-    const enclosingPair = symbolPairs.find(([open, close]) => {
+    const enclosingPair = enclosingSymbolPairs.find(([open, close]) => {
         if (characters[0] !== open || characters[characters.length - 1] !== close) {
             return false;
         }
@@ -393,75 +381,42 @@ function findEnclosingSymbolPair(text, symbolPairs) {
     return enclosingPair || null;
 }
 
-// 清理文本
-function cleanText(source, symbolPairs) {
-    const furiganaContainer = cloneContentForText(source);
-    const normalizedSymbolPairs = symbolPairs
-        .map(pair => Array.from(pair))
-        .filter(pair => pair.length >= 2)
-        .map(pair => [pair[0], pair[pair.length - 1]]);
-
-    function removeTranslationDivs(element) {
-        element.querySelectorAll(`.${extensionClasses.translation}`).forEach(translationDiv => {
-            translationDiv.parentNode.removeChild(translationDiv);
+// 提取文本块的纯文本和带读音文本（漢字(かんじ)），排除插件自己插入的译文。
+function cleanText(source) {
+    const extractText = withFurigana => {
+        const clone = source.cloneNode(true);
+        clone.querySelectorAll(`.${extensionClasses.translation}, rp`).forEach(node => node.remove());
+        clone.querySelectorAll('rt').forEach(rt => {
+            rt.replaceWith(withFurigana ? `(${rt.textContent})` : '');
         });
-    }
+        return clone.textContent;
+    };
 
-    function processRubyTags(element, withFurigana) {
-        element.querySelectorAll('ruby').forEach(ruby => {
-            ruby.querySelectorAll('rp').forEach(rp => rp.remove());
-            ruby.querySelectorAll('rt').forEach(rt => {
-                const textNode = withFurigana ? document.createTextNode(`(${rt.textContent})`) : document.createTextNode('');
-                rt.parentNode.replaceChild(textNode, rt);
-            });
-        });
-    }
-
-    // 初次处理：移除翻译内容并处理 ruby 标签（保留振假名）
-    removeTranslationDivs(furiganaContainer);
-    processRubyTags(furiganaContainer, true);
-    let textFurigana = furiganaContainer.textContent;
-
-    // 再次处理：移除翻译内容和所有 rt、rp 标签（去除振假名）
-    const plainContainer = cloneContentForText(source);
-    removeTranslationDivs(plainContainer);
-    plainContainer.querySelectorAll('rt, rp').forEach(tag => tag.remove());
-    let originalText = plainContainer.textContent;
-
-    let trimmedText = originalText.trimStart();
-    let leadingSpaces = originalText.substring(0, originalText.length - trimmedText.length);
-
+    const originalText = extractText(false);
+    const trimmedText = originalText.trimStart();
+    const leadingSpaces = originalText.slice(0, originalText.length - trimmedText.length);
     if (!trimmedText) {
         return { text: '-', textFurigana: '-', space: leadingSpaces, symbolPair: null };
     }
 
-    let finalText = trimmedText.trim();
-    textFurigana = textFurigana.trim();
-
-    const symbolPair = findEnclosingSymbolPair(finalText, normalizedSymbolPairs);
+    let text = trimmedText.trim();
+    let textFurigana = extractText(true).trim();
+    const symbolPair = findEnclosingSymbolPair(text);
     if (symbolPair) {
-        finalText = finalText.substring(symbolPair[0].length, finalText.length - symbolPair[1].length).trim();
-        if (textFurigana.startsWith(symbolPair[0]) && textFurigana.endsWith(symbolPair[1])) {
-            textFurigana = textFurigana
-                .substring(symbolPair[0].length, textFurigana.length - symbolPair[1].length)
-                .trim();
+        const [open, close] = symbolPair;
+        text = text.slice(open.length, -close.length).trim();
+        if (textFurigana.startsWith(open) && textFurigana.endsWith(close)) {
+            textFurigana = textFurigana.slice(open.length, -close.length).trim();
         }
     }
-
-    return { text: finalText, textFurigana: textFurigana, space: leadingSpaces, symbolPair: symbolPair };
+    return { text, textFurigana, space: leadingSpaces, symbolPair };
 }
 
 function showBottomNotification(message = '已复制', duration = 800) {
     const notification = ensureCopyNotification();
     notification.textContent = message;
     notification.classList.add('show');
-
-    // 清除之前的定时器
-    if (notificationTimeout) {
-        clearTimeout(notificationTimeout);
-    }
-
-    // 设置新的定时器
+    clearTimeout(notificationTimeout);
     notificationTimeout = setTimeout(() => {
         notification.classList.remove('show');
     }, duration);
@@ -512,18 +467,10 @@ function fallbackCopyText(text) {
     });
 }
 
-// 复制指定文本块
-function copyBlockText(tag) {
-    const textObj = cleanText(tag, parseStringToArray(extensionSettings.symbolPairs));
-    const textToCopy = extensionSettings.ignoreFurigana ? textObj.text : textObj.textFurigana;
-    copyTextToClipboard(textToCopy);
-}
-
-// 复制指定句子
-function copySentenceText(tag) {
-    const textObj = cleanText(tag, parseStringToArray(extensionSettings.symbolPairs));
-    const textToCopy = extensionSettings.ignoreFurigana ? textObj.text : textObj.textFurigana;
-    copyTextToClipboard(textToCopy);
+// 复制段落或句子；是否带读音由「忽略振假名」决定。
+function copyElementText(element) {
+    const textObj = cleanText(element);
+    copyTextToClipboard(extensionSettings.ignoreFurigana ? textObj.text : textObj.textFurigana);
 }
 
 
@@ -613,32 +560,21 @@ function stopTranslationTrackingIfIdle() {
     }
 }
 
-function getOriginalContentLineRects(tag, translationDiv) {
+function getOriginalContentLineRects(tag) {
     const rects = [];
     for (const child of Array.from(tag.childNodes)) {
-        if (child === translationDiv) {
+        if (child.nodeType === Node.ELEMENT_NODE && child.classList.contains(extensionClasses.translation)) {
             continue;
         }
-        if (
-            child.nodeType === Node.ELEMENT_NODE &&
-            child.classList.contains(extensionClasses.translation)
-        ) {
-            continue;
-        }
-
         const range = document.createRange();
-        try {
-            range.selectNode(child);
-            rects.push(...Array.from(range.getClientRects()));
-        } finally {
-            range.detach();
-        }
+        range.selectNode(child);
+        rects.push(...Array.from(range.getClientRects()));
     }
     return rects.filter(rect => rect.width > 0 && rect.height > 0);
 }
 
-function getLastOriginalLineRect(tag, translationDiv) {
-    const rects = getOriginalContentLineRects(tag, translationDiv);
+function getLastOriginalLineRect(tag) {
+    const rects = getOriginalContentLineRects(tag);
     if (rects.length > 0) {
         return rects[rects.length - 1];
     }
@@ -655,7 +591,7 @@ function positionTranslationToggle(translationDiv) {
         return;
     }
 
-    const lineRect = getLastOriginalLineRect(tag, translationDiv);
+    const lineRect = getLastOriginalLineRect(tag);
     const toggleRect = toggle.getBoundingClientRect();
     const toggleWidth = toggleRect.width || 32;
     const toggleHeight = toggleRect.height || 32;
@@ -665,8 +601,8 @@ function positionTranslationToggle(translationDiv) {
     const outsideViewport =
         lineRect.bottom < 0 ||
         lineRect.top > window.innerHeight ||
-        lineRect.left - toggleWidth - gap + toggleWidth < 0 ||
-        lineRect.left - toggleWidth - gap > window.innerWidth;
+        lineRect.left - gap < 0 ||
+        left - window.scrollX > window.innerWidth;
 
     toggle.style.visibility = outsideViewport ? 'hidden' : '';
     toggle.style.color = getComputedStyle(tag).color;
@@ -726,87 +662,36 @@ function getTranslationTextSignature(text) {
     };
 }
 
-function isManagedTranslationCacheKey(key) {
-    return key.startsWith(translationCachePrefix) ||
-        legacyTranslationCachePrefixes.some(prefix => key.startsWith(prefix));
-}
-
-function getTranslationCacheKey(text, translator, fromLang, toLang, model, mode = 'novel') {
-    const textSignature = getTranslationTextSignature(text);
+function getTranslationCacheKey(text, provider, mode) {
     const parts = [
         getPageCacheScope(),
-        textSignature.hash,
-        translator,
-        fromLang || '',
-        toLang || '',
-        model || ''
+        getTranslationTextSignature(text).hash,
+        provider.translator,
+        provider.from || '',
+        provider.to || '',
+        provider.model || ''
     ];
     // 保持轻小说模式的 v2 key 不变，常规模式另加身份，避免读取含假名的旧结果。
-    if (normalizeTranslationMode(mode) === 'general') {
+    if (mode === 'general') {
         parts.push('general');
     }
     return `${translationCachePrefix}${parts.map(part => encodeURIComponent(String(part))).join(':')}`;
 }
 
-function storageLocalGet(key) {
+// 扩展重载后，旧页面里的孤儿脚本访问 chrome.storage 会同步抛错；统一降级为无缓存。
+function storageLocal(method, argument, action) {
     return new Promise(resolve => {
-        if (typeof chrome === 'undefined' || !chrome.storage?.local?.get) {
+        try {
+            chrome.storage.local[method](argument, result => {
+                const error = chrome.runtime.lastError;
+                if (error) {
+                    console.warn(`[AnonTranslator II] Failed to ${action} translation cache:`, error.message);
+                }
+                resolve(error ? undefined : result);
+            });
+        } catch (error) {
+            console.warn(`[AnonTranslator II] Failed to ${action} translation cache:`, error);
             resolve(undefined);
-            return;
-        }
-        try {
-            chrome.storage.local.get([key], result => {
-                if (chrome.runtime.lastError) {
-                    console.warn('[AnonTranslator II] Failed to read translation cache:', chrome.runtime.lastError.message);
-                    resolve(undefined);
-                    return;
-                }
-                resolve(result?.[key]);
-            });
-        } catch (error) {
-            // 孤儿脚本访问 chrome.storage 会同步抛错，降级为无缓存。
-            console.warn('[AnonTranslator II] Failed to read translation cache:', error);
-            resolve(undefined);
-        }
-    });
-}
-
-function storageLocalSet(values) {
-    return new Promise(resolve => {
-        if (typeof chrome === 'undefined' || !chrome.storage?.local?.set) {
-            resolve();
-            return;
-        }
-        try {
-            chrome.storage.local.set(values, () => {
-                if (chrome.runtime.lastError) {
-                    console.warn('[AnonTranslator II] Failed to write translation cache:', chrome.runtime.lastError.message);
-                }
-                resolve();
-            });
-        } catch (error) {
-            console.warn('[AnonTranslator II] Failed to write translation cache:', error);
-            resolve();
-        }
-    });
-}
-
-function storageLocalRemove(keys) {
-    return new Promise(resolve => {
-        if (typeof chrome === 'undefined' || !chrome.storage?.local?.remove) {
-            resolve();
-            return;
-        }
-        try {
-            chrome.storage.local.remove(keys, () => {
-                if (chrome.runtime.lastError) {
-                    console.warn('[AnonTranslator II] Failed to prune translation cache:', chrome.runtime.lastError.message);
-                }
-                resolve();
-            });
-        } catch (error) {
-            console.warn('[AnonTranslator II] Failed to prune translation cache:', error);
-            resolve();
         }
     });
 }
@@ -816,17 +701,10 @@ function getTranslationCacheTtlMs() {
     if (!Number.isFinite(days) || days < 0) {
         return 30 * 24 * 60 * 60 * 1000;
     }
-    if (days === 0) {
-        return Infinity;
-    }
-    return days * 24 * 60 * 60 * 1000;
+    return days === 0 ? Infinity : days * 24 * 60 * 60 * 1000;
 }
 
-function isTranslationCacheExpired(cached, now = Date.now()) {
-    const ttlMs = getTranslationCacheTtlMs();
-    return Number.isFinite(ttlMs) && now - Number(cached?.createdAt) > ttlMs;
-}
-
+// 删除旧格式、过期和超出数量上限的缓存；每隔一段时间最多执行一次。
 function pruneTranslationCache() {
     const now = Date.now();
     if (now - lastTranslationCachePruneAt < translationCachePruneIntervalMs) {
@@ -834,67 +712,45 @@ function pruneTranslationCache() {
     }
     lastTranslationCachePruneAt = now;
 
-    if (typeof chrome === 'undefined' || !chrome.storage?.local?.get) {
-        return;
-    }
-    try {
-        chrome.storage.local.get(null, result => {
-            if (chrome.runtime.lastError || !result) {
-                if (chrome.runtime.lastError) {
-                    console.warn('[AnonTranslator II] Failed to inspect translation cache:', chrome.runtime.lastError.message);
-                }
-                return;
-            }
+    storageLocal('get', null, 'inspect').then(items => {
+        if (!items) return;
 
-            const entries = Object.entries(result)
-                .filter(([key]) => isManagedTranslationCacheKey(key))
-                .map(([key, value]) => ({
-                    key,
-                    createdAt: Number(value?.createdAt) || 0,
-                    legacy: legacyTranslationCachePrefixes.some(prefix => key.startsWith(prefix))
-                }))
-                .sort((a, b) => b.createdAt - a.createdAt);
-
-            const ttlMs = getTranslationCacheTtlMs();
-            const expiredKeys = entries
-                .filter(entry => entry.legacy || (
-                    Number.isFinite(ttlMs) && now - entry.createdAt > ttlMs
-                ))
-                .map(entry => entry.key);
-            const overflowKeys = entries
-                .filter(entry => !entry.legacy)
-                .slice(translationCacheMaxEntries)
-                .map(entry => entry.key);
-            const keysToRemove = Array.from(new Set([...expiredKeys, ...overflowKeys]));
-            if (keysToRemove.length > 0) {
-                storageLocalRemove(keysToRemove);
-            }
-        });
-    } catch (error) {
-        console.warn('[AnonTranslator II] Failed to inspect translation cache:', error);
-    }
+        const ttlMs = getTranslationCacheTtlMs();
+        const keys = Object.keys(items).filter(key => key.startsWith(translationCacheRootPrefix));
+        const entries = keys
+            .filter(key => key.startsWith(translationCachePrefix))
+            .map(key => ({ key, createdAt: Number(items[key]?.createdAt) || 0 }))
+            .sort((a, b) => b.createdAt - a.createdAt);
+        const keysToRemove = new Set([
+            ...keys.filter(key => !key.startsWith(translationCachePrefix)),
+            ...entries.filter(entry => now - entry.createdAt > ttlMs).map(entry => entry.key),
+            ...entries.slice(translationCacheMaxEntries).map(entry => entry.key)
+        ]);
+        if (keysToRemove.size > 0) {
+            storageLocal('remove', Array.from(keysToRemove), 'prune');
+        }
+    });
 }
 
-async function getCachedTranslation(text, translator, fromLang, toLang, model, mode = 'novel') {
+async function getCachedTranslation(text, provider, mode) {
     if (!extensionSettings.translationCache) return null;
 
-    const normalizedMode = normalizeTranslationMode(mode);
-    const key = getTranslationCacheKey(text, translator, fromLang, toLang, model, normalizedMode);
-    const cached = await storageLocalGet(key);
+    const key = getTranslationCacheKey(text, provider, mode);
+    const cached = (await storageLocal('get', [key], 'read'))?.[key];
     const textSignature = getTranslationTextSignature(text);
     if (
         !cached ||
         cached.version !== translationCacheVersion ||
         cached.textHash !== textSignature.hash ||
         cached.textLength !== textSignature.length ||
-        cached.provider !== translator ||
-        (normalizedMode === 'general' && cached.mode !== 'general') ||
-        isTranslationCacheExpired(cached) ||
+        cached.provider !== provider.translator ||
+        (mode === 'general' && cached.mode !== 'general') ||
+        Date.now() - Number(cached.createdAt) > getTranslationCacheTtlMs() ||
         typeof cached.translatedText !== 'string' ||
         !cached.translatedText
     ) {
         if (cached) {
-            storageLocalRemove([key]);
+            storageLocal('remove', [key], 'prune');
         }
         return null;
     }
@@ -909,22 +765,21 @@ async function getCachedTranslation(text, translator, fromLang, toLang, model, m
     };
 }
 
-function cacheTranslation(text, translator, fromLang, toLang, model, response, mode = 'novel') {
+function cacheTranslation(text, provider, response, mode) {
     if (!extensionSettings.translationCache || !response?.translatedText) return;
 
-    const normalizedMode = normalizeTranslationMode(mode);
-    const key = getTranslationCacheKey(text, translator, fromLang, toLang, model, normalizedMode);
+    const key = getTranslationCacheKey(text, provider, mode);
     const textSignature = getTranslationTextSignature(text);
     const entry = {
         version: translationCacheVersion,
         page: getPageCacheScope(),
         textHash: textSignature.hash,
         textLength: textSignature.length,
-        provider: response.provider || translator,
-        from: fromLang || '',
-        to: toLang || '',
-        model: model || '',
-        mode: normalizedMode,
+        provider: response.provider || provider.translator,
+        from: provider.from || '',
+        to: provider.to || '',
+        model: provider.model || '',
+        mode,
         translatedText: response.translatedText,
         furiganaAnnotations: Array.isArray(response.furiganaAnnotations)
             ? response.furiganaAnnotations
@@ -932,22 +787,15 @@ function cacheTranslation(text, translator, fromLang, toLang, model, response, m
         warning: typeof response.warning === 'string' ? response.warning : '',
         createdAt: Date.now()
     };
-    storageLocalSet({ [key]: entry }).then(pruneTranslationCache);
+    storageLocal('set', { [key]: entry }, 'write').then(pruneTranslationCache);
 }
 
-function renderTranslationResult(translationDiv, textObj, response, color, translator, mode = 'novel') {
+function renderTranslationResult(translationDiv, textObj, response, provider) {
     const body = getTranslationBody(translationDiv);
-    const provider = response.provider || translator;
+    const providerName = response.provider || provider.translator;
 
-    if (
-        normalizeTranslationMode(mode) === 'novel' &&
-        provider === 'deepseek' &&
-        !body.querySelector(`.${extensionClasses.furiganaSource}`)
-    ) {
-        const sourceLine = createFuriganaSourceLine(
-            textObj,
-            response.furiganaAnnotations
-        );
+    if (providerName === 'deepseek' && !body.querySelector(`.${extensionClasses.furiganaSource}`)) {
+        const sourceLine = createFuriganaSourceLine(textObj, response.furiganaAnnotations);
         if (response.warning) {
             sourceLine.title = response.warning;
             console.warn(`[AnonTranslator II] ${response.warning}`);
@@ -955,55 +803,51 @@ function renderTranslationResult(translationDiv, textObj, response, color, trans
         body.insertBefore(sourceLine, body.firstChild);
     }
 
-    const p = document.createElement('div');
-    p.style.color = color;
-    p.dataset.translationProvider = provider;
+    const result = document.createElement('div');
+    result.style.color = provider.color;
+    result.dataset.translationProvider = providerName;
     if (response.warning) {
-        p.title = response.warning;
+        result.title = response.warning;
     }
-    if (textObj.symbolPair) {
-        p.textContent = textObj.space + textObj.symbolPair[0] + response.translatedText + textObj.symbolPair[1];
-    } else {
-        p.textContent = textObj.space + response.translatedText;
-    }
-    body.appendChild(p);
+    const [open, close] = textObj.symbolPair || ['', ''];
+    result.textContent = textObj.space + open + response.translatedText + close;
+    body.appendChild(result);
     scheduleTranslationTogglePositions();
 }
 
 // 发送消息到背景脚本并获取翻译结果
-function requestTranslation(tag, translationDiv, textObj, fromLang, toLang, translator, color, model) {
-    const text = textObj.text;
+function requestTranslation(tag, translationDiv, textObj, provider) {
     try {
         chrome.runtime.sendMessage({
-            action: "translate",
-            text: text,
-            from: fromLang,
-            to: toLang,
-            translator: translator,
-            model: model,
+            action: 'translate',
+            text: textObj.text,
+            from: provider.from,
+            to: provider.to,
+            translator: provider.translator,
+            model: provider.model,
             mode: 'novel'
-        }, function(response) {
+        }, response => {
             if (!translationDiv.isConnected || !tag.contains(translationDiv)) {
                 return;
             }
             if (chrome.runtime.lastError) {
-                renderTranslationError(translationDiv, color, chrome.runtime.lastError.message);
+                renderTranslationError(translationDiv, provider.color, chrome.runtime.lastError.message);
                 return;
             }
             if (response?.ok && response.translatedText) {
                 const normalizedResponse = {
                     ...response,
-                    provider: response.provider || translator
+                    provider: response.provider || provider.translator
                 };
-                renderTranslationResult(translationDiv, textObj, normalizedResponse, color, translator);
-                cacheTranslation(text, translator, fromLang, toLang, model, normalizedResponse, 'novel');
+                renderTranslationResult(translationDiv, textObj, normalizedResponse, provider);
+                cacheTranslation(textObj.text, provider, normalizedResponse, 'novel');
             } else {
-                renderTranslationError(translationDiv, color, response?.error || '翻译没有返回结果');
+                renderTranslationError(translationDiv, provider.color, response?.error || '翻译没有返回结果');
             }
         });
     } catch (_) {
         // 扩展更新或重载后，旧页面的孤儿脚本无法再连接后台，明确提示刷新而不是留空框。
-        renderTranslationError(translationDiv, color, '扩展已更新或重新加载，请刷新页面后重试');
+        renderTranslationError(translationDiv, provider.color, '扩展已更新或重新加载，请刷新页面后重试');
     }
 }
 
@@ -1080,22 +924,47 @@ function createFuriganaSourceLine(textObj, annotations) {
     return sourceLine;
 }
 
-async function renderCachedOrRequestTranslation(tag, translationDiv, textObj, fromLang, toLang, translator, color, model) {
-    const cached = await getCachedTranslation(textObj.text, translator, fromLang, toLang, model);
+async function renderCachedOrRequestTranslation(tag, translationDiv, textObj, provider) {
+    const cached = await getCachedTranslation(textObj.text, provider, 'novel');
     if (!translationDiv.isConnected || !tag.contains(translationDiv)) {
         return;
     }
     if (cached) {
-        renderTranslationResult(translationDiv, textObj, cached, color, translator);
+        renderTranslationResult(translationDiv, textObj, cached, provider);
         showBottomNotification('已读取缓存', 900);
         return;
     }
-    requestTranslation(tag, translationDiv, textObj, fromLang, toLang, translator, color, model);
+    requestTranslation(tag, translationDiv, textObj, provider);
+}
+
+// 两种模式共用的已启用翻译引擎配置。
+function getEnabledProviders() {
+    const providers = [];
+    if (extensionSettings.google) {
+        providers.push({
+            translator: 'google',
+            label: 'Google',
+            color: extensionSettings.googleColor,
+            from: extensionSettings.googleFrom,
+            to: extensionSettings.googleTo,
+            model: undefined
+        });
+    }
+    if (extensionSettings.deepseek) {
+        providers.push({
+            translator: 'deepseek',
+            label: 'DeepSeek',
+            color: extensionSettings.deepseekColor,
+            from: extensionSettings.deepseekFrom,
+            to: extensionSettings.deepseekTo,
+            model: extensionSettings.deepseekModel
+        });
+    }
+    return providers;
 }
 
 // 翻译文本并显示结果
 function translate(tag) {
-    const textObj = cleanText(tag, parseStringToArray(extensionSettings.symbolPairs));
     const existingTranslation = tag.querySelector(`.${extensionClasses.translation}`);
 
     // 点击失败的段落时允许直接重试，不需要先切换到其他段落。
@@ -1103,38 +972,16 @@ function translate(tag) {
         removeTranslationDiv(existingTranslation);
     }
 
-    if (
-        (extensionSettings.google || extensionSettings.deepseek) &&
-        !tag.querySelector(`.${extensionClasses.translation}`)
-    ) {
-        const translationDiv = createTranslationDiv();
-        tag.appendChild(translationDiv);
-        scheduleTranslationTogglePositions();
+    const providers = getEnabledProviders();
+    if (providers.length === 0 || tag.querySelector(`.${extensionClasses.translation}`)) return;
 
-        if (extensionSettings.google) {
-            renderCachedOrRequestTranslation(
-                tag,
-                translationDiv,
-                textObj,
-                extensionSettings.googleFrom,
-                extensionSettings.googleTo,
-                'google',
-                extensionSettings.googleColor
-            );
-        }
-        if (extensionSettings.deepseek) {
-            renderCachedOrRequestTranslation(
-                tag,
-                translationDiv,
-                textObj,
-                extensionSettings.deepseekFrom,
-                extensionSettings.deepseekTo,
-                'deepseek',
-                extensionSettings.deepseekColor,
-                extensionSettings.deepseekModel
-            );
-        }
-    }
+    const textObj = cleanText(tag);
+    const translationDiv = createTranslationDiv();
+    tag.appendChild(translationDiv);
+    scheduleTranslationTogglePositions();
+    providers.forEach(provider => {
+        renderCachedOrRequestTranslation(tag, translationDiv, textObj, provider);
+    });
 }
 
 /* ------------------------------------------------------------常规翻译模式 */
@@ -1180,15 +1027,7 @@ function getRangeAnchorRect(range) {
     const rects = Array.from(range.getClientRects?.() || [])
         .filter(rect => rect.width > 0 || rect.height > 0);
     const rect = rects[rects.length - 1] || range.getBoundingClientRect?.();
-    if (!rect || (!rect.width && !rect.height)) return null;
-    return {
-        left: rect.left,
-        right: rect.right,
-        top: rect.top,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height
-    };
+    return rect && (rect.width || rect.height) ? rect : null;
 }
 
 function readGeneralSelection() {
@@ -1284,10 +1123,6 @@ function clearGeneralTranslationUi() {
     removeGeneralTranslationCard();
     generalSelectionSnapshot = null;
     generalDismissedSelectionSnapshot = null;
-    if (generalDomObserver) {
-        generalDomObserver.disconnect();
-        generalDomObserver = null;
-    }
 }
 
 function dismissGeneralTranslationUi() {
@@ -1414,31 +1249,6 @@ function createGeneralTranslationCard() {
     return body;
 }
 
-function getGeneralProviderConfigs() {
-    const providers = [];
-    if (extensionSettings.google) {
-        providers.push({
-            translator: 'google',
-            label: 'Google',
-            color: extensionSettings.googleColor,
-            from: extensionSettings.googleFrom,
-            to: extensionSettings.googleTo,
-            model: undefined
-        });
-    }
-    if (extensionSettings.deepseek) {
-        providers.push({
-            translator: 'deepseek',
-            label: 'DeepSeek',
-            color: extensionSettings.deepseekColor,
-            from: extensionSettings.deepseekFrom,
-            to: extensionSettings.deepseekTo,
-            model: extensionSettings.deepseekModel
-        });
-    }
-    return providers;
-}
-
 function createGeneralProviderResult(body, provider) {
     const result = document.createElement('div');
     result.className = extensionClasses.generalResult;
@@ -1478,10 +1288,7 @@ function requestGeneralTranslation(text, provider, resultNode, generation) {
                 resultNode.textContent = response.translatedText;
                 cacheTranslation(
                     text,
-                    provider.translator,
-                    provider.from,
-                    provider.to,
-                    provider.model,
+                    provider,
                     { ...response, provider: response.provider || provider.translator },
                     'general'
                 );
@@ -1497,14 +1304,7 @@ function requestGeneralTranslation(text, provider, resultNode, generation) {
 }
 
 async function renderCachedOrRequestGeneralTranslation(text, provider, resultNode, generation) {
-    const cached = await getCachedTranslation(
-        text,
-        provider.translator,
-        provider.from,
-        provider.to,
-        provider.model,
-        'general'
-    );
+    const cached = await getCachedTranslation(text, provider, 'general');
     if (
         generation !== generalRequestGeneration ||
         !generalTranslationCard?.isConnected ||
@@ -1525,7 +1325,7 @@ function translateGeneralSelection() {
     removeGeneralSelectionButton();
     const body = createGeneralTranslationCard();
     const generation = generalRequestGeneration;
-    const providers = getGeneralProviderConfigs();
+    const providers = getEnabledProviders();
     if (providers.length === 0) {
         const empty = document.createElement('div');
         empty.className = extensionClasses.generalResult;
@@ -1543,42 +1343,43 @@ function translateGeneralSelection() {
 
 /* ------------------------------------------------------------用户界面交互模块 */
 
-// 按标点和长度拆分纯文本，并用 DOM API 创建安全的句子节点。
-function createSentenceFragment(text, sentenceThreshold, sentenceDelimiters) {
+// 按句末标点拆句，例如「本当？」「うん。」→「本当？」|「うん。」。
+// 「……。」と言った 这类引用后接「と」时视为同一句，不拆开。
+function splitIntoSentences(text) {
+    const characters = Array.from(text);
+    const sentences = [];
+    let current = '';
+
+    for (let index = 0; index < characters.length; index += 1) {
+        current += characters[index];
+        if (!sentenceEndings.has(characters[index])) continue;
+
+        while (
+            index + 1 < characters.length &&
+            (
+                sentenceEndings.has(characters[index + 1]) ||
+                closingBrackets.has(characters[index + 1]) ||
+                whitespaceCharacterPattern.test(characters[index + 1])
+            )
+        ) {
+            index += 1;
+            current += characters[index];
+        }
+        if (characters[index + 1] === 'と' && closingBrackets.has(characters[index])) continue;
+
+        sentences.push(current);
+        current = '';
+    }
+    if (current || sentences.length === 0) {
+        sentences.push(current);
+    }
+    return sentences;
+}
+
+// 用 DOM API 创建安全的句子节点。
+function createSentenceFragment(text) {
     const fragment = document.createDocumentFragment();
-    const threshold = Number.isFinite(Number(sentenceThreshold)) && Number(sentenceThreshold) > 0
-        ? Number(sentenceThreshold)
-        : 50;
-    const delimiters = new Set(sentenceDelimiters.flatMap(delimiter => Array.from(delimiter)));
-    const sentenceParts = [];
-    let currentPart = '';
-
-    for (const character of Array.from(text)) {
-        currentPart += character;
-        if (delimiters.has(character)) {
-            sentenceParts.push(currentPart);
-            currentPart = '';
-        }
-    }
-    if (currentPart) {
-        sentenceParts.push(currentPart);
-    }
-
-    const mergedSentences = [];
-    let pendingSentence = '';
-    for (const sentence of sentenceParts) {
-        if (pendingSentence && Array.from(pendingSentence + sentence).length > threshold) {
-            mergedSentences.push(pendingSentence);
-            pendingSentence = sentence;
-        } else {
-            pendingSentence += sentence;
-        }
-    }
-    if (pendingSentence || sentenceParts.length === 0) {
-        mergedSentences.push(pendingSentence);
-    }
-
-    for (const sentence of mergedSentences) {
+    for (const sentence of splitIntoSentences(text)) {
         const span = document.createElement('span');
         span.className = extensionClasses.sentence;
         span.textContent = sentence;
@@ -1587,7 +1388,7 @@ function createSentenceFragment(text, sentenceThreshold, sentenceDelimiters) {
     return fragment;
 }
 
-function splitTagSentences(tag, sentenceThreshold, sentenceDelimiters) {
+function splitTagSentences(tag) {
     if (!canSafelySplitSentences(tag) || originalBlockContents.has(tag)) {
         return;
     }
@@ -1601,7 +1402,7 @@ function splitTagSentences(tag, sentenceThreshold, sentenceDelimiters) {
         originalContent.appendChild(tag.firstChild);
     }
     originalBlockContents.set(tag, originalContent);
-    tag.appendChild(createSentenceFragment(text, sentenceThreshold, sentenceDelimiters));
+    tag.appendChild(createSentenceFragment(text));
     translationDivs.forEach(div => tag.appendChild(div));
     tag.classList.add(extensionClasses.splitSentences);
     splitBlocks.add(tag);
@@ -1648,60 +1449,43 @@ function getSafeImageUrl(image) {
     }
 }
 
-// 处理点击事件
+// 轻小说模式：左键点击段落，复制并翻译。
 function handleClick(event) {
     if (!pluginEnabled || !isNovelMode() || event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest('img, svg image')) return;
 
-    const clickedElement = event.target instanceof Element ? event.target : null;
-    if (clickedElement?.closest('img, svg image')) return;
+    const block = findReadableBlockFromEvent(event);
+    if (!block) return;
 
-    const targetElement = findReadableBlockFromEvent(event);
-    if (!targetElement) return;
-
-    applyBlueBorder(targetElement, () => {
-        copyBlockText(targetElement);
-        translate(targetElement);
-    });
+    activateBlock(block);
+    copyElementText(block);
+    translate(block);
 }
 
-// 为指定标签添加激活框
-function applyBlueBorder(tag, callback) {
-    if (!pluginEnabled || !tag.isConnected) return;
-
-    // 如果有上一个被点击的标签且不是当前标签
+// 切换激活段落：还原上一段的拆句和激活框（译文保留），再拆句并框住当前段落。
+function activateBlock(tag) {
     if (lastClickedPtag && lastClickedPtag !== tag) {
-        // 只还原句子拆分和激活框；翻译结果保留，方便之后反复查看。
         restoreSentenceSplitting(lastClickedPtag);
-        // 移除上一个激活框
         restoreOutline(lastClickedPtag);
     }
-
-    // 检查并分割句子
-    if (!tag.classList.contains(extensionClasses.splitSentences)) {
-        splitTagSentences(
-            tag,
-            extensionSettings.sentenceThreshold,
-            parseStringToArray(extensionSettings.sentenceDelimiters)
-        );
-    }
-
-    // 为当前标签应用激活框
+    splitTagSentences(tag);
     tag.classList.add(extensionClasses.selected);
     lastClickedPtag = tag;
-    applyOutline(
-        tag,
-        extensionSettings.borderWidth,
-        extensionSettings.borderStyle,
-        extensionSettings.selectedBorderColor,
-        extensionSettings.borderRadius
-    );
-    
-    if (callback) callback();
+    applyOutline(tag, extensionSettings.selectedBorderColor);
 }
 
-// 为指定标签添加预选框，并绑定点击事件
-function highlightAndCopyPtag(doc) {
-    doc.addEventListener('mouseover', (event) => {
+function repositionFloatingUi() {
+    scheduleTranslationTogglePositions();
+    positionGeneralSelectionButton();
+    positionGeneralTranslationCard();
+}
+
+function attachListeners() {
+    if (listenersAttached) return;
+    listenersAttached = true;
+
+    // 轻小说模式：悬停段落显示预选框。
+    document.addEventListener('mouseover', (event) => {
         if (!pluginEnabled || !isNovelMode()) return;
 
         const targetElement = findReadableBlockFromEvent(event);
@@ -1718,17 +1502,11 @@ function highlightAndCopyPtag(doc) {
             !targetElement.classList.contains(extensionClasses.hovered)
         ) {
             targetElement.classList.add(extensionClasses.hovered);
-            applyOutline(
-                targetElement,
-                extensionSettings.borderWidth,
-                extensionSettings.borderStyle,
-                extensionSettings.freeBorderColor,
-                extensionSettings.borderRadius
-            );
+            applyOutline(targetElement, extensionSettings.freeBorderColor);
         }
     }, true);
 
-    doc.addEventListener('mouseout', (event) => {
+    document.addEventListener('mouseout', (event) => {
         if (!pluginEnabled || !isNovelMode()) return;
 
         const fromElement = findReadableBlockFromEvent(event);
@@ -1747,54 +1525,39 @@ function highlightAndCopyPtag(doc) {
         }
     }, true);
 
-    doc.addEventListener('click', handleClick, true);
-    window.addEventListener('scroll', () => {
-        scheduleTranslationTogglePositions();
-        positionGeneralSelectionButton();
-        positionGeneralTranslationCard();
-    }, true);
-    window.addEventListener('resize', () => {
-        scheduleTranslationTogglePositions();
-        positionGeneralSelectionButton();
-        positionGeneralTranslationCard();
-    });
+    document.addEventListener('click', handleClick, true);
+    window.addEventListener('scroll', repositionFloatingUi, true);
+    window.addEventListener('resize', repositionFloatingUi);
 
-    // 拖选过程中 selectionchange 会连续触发；只在松开指针或键盘操作结束后显示按钮。
-    doc.addEventListener('pointerup', scheduleGeneralSelectionUpdate, true);
-    doc.addEventListener('keyup', scheduleGeneralSelectionUpdate, true);
-    doc.addEventListener('pointerdown', event => {
+    // 常规翻译模式：拖选过程中 selectionchange 会连续触发；只在松开指针或键盘操作结束后显示按钮。
+    document.addEventListener('pointerup', scheduleGeneralSelectionUpdate, true);
+    document.addEventListener('keyup', scheduleGeneralSelectionUpdate, true);
+    document.addEventListener('pointerdown', event => {
         if (!pluginEnabled || isNovelMode() || isGeneralUiNode(event.target)) return;
         if (generalTranslationCard || generalSelectionButton) {
             dismissGeneralTranslationUi();
         }
     }, true);
-    doc.addEventListener('keydown', event => {
+    document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && !isNovelMode()) {
             dismissGeneralTranslationUi();
         }
     }, true);
-}
-
-// 为文档添加鼠标监听器
-function addMouseListener(doc) {
-    if (!doc || initializedDocuments.has(doc)) return;
-    initializedDocuments.add(doc);
-
-    highlightAndCopyPtag(doc);
 
     // 仅在扩展生成的句子上接管右键，用于复制当前句子。
-    doc.addEventListener('contextmenu', function(event) {
+    document.addEventListener('contextmenu', (event) => {
         if (!pluginEnabled || !isNovelMode() || !extensionSettings.copy) return;
 
         const targetElement = event.target instanceof Element ? event.target : null;
         const sentence = targetElement?.closest(`.${extensionClasses.sentence}`);
         if (sentence && lastClickedPtag?.contains(sentence)) {
             event.preventDefault();
-            copySentenceText(sentence);
+            copyElementText(sentence);
         }
     });
 
-    doc.addEventListener('mouseover', (event) => {
+    // 句子高亮，以及「点击提取图片」时的手形光标。
+    document.addEventListener('mouseover', (event) => {
         if (!pluginEnabled) return;
 
         const targetElement = event.target instanceof Element ? event.target : null;
@@ -1814,7 +1577,7 @@ function addMouseListener(doc) {
         }
     });
 
-    doc.addEventListener('mouseout', (event) => {
+    document.addEventListener('mouseout', (event) => {
         if (!pluginEnabled) return;
 
         const targetElement = event.target instanceof Element ? event.target : null;
@@ -1832,7 +1595,7 @@ function addMouseListener(doc) {
         }
     });
 
-    doc.addEventListener('click', (event) => {
+    document.addEventListener('click', (event) => {
         if (!pluginEnabled || !extensionSettings.extraImage) return;
 
         const targetElement = event.target instanceof Element ? event.target : null;

@@ -63,7 +63,7 @@ async function loadPopup({ settings = {}, failLoad = false, deferLoad = false } 
   popup.completeLoad();
   assert.equal(popup.input.disabled, false);
   const { document } = popup.window;
-  document.getElementById('sentenceThreshold').value = '0';
+  document.getElementById('borderWidth').value = '9px';
   document.getElementById('deepseekApiKey').value = 'unsaved-key';
   popup.input.click();
   assert.deepEqual(popup.syncWrites, [{ pluginSwitch: true }]);
@@ -74,13 +74,13 @@ async function loadPopup({ settings = {}, failLoad = false, deferLoad = false } 
   popup.completeWrite();
   assert.equal(popup.store.pluginSwitch, true);
   assert.equal(popup.input.disabled, false);
-  assert.ok(document.querySelector('.upper-part').classList.contains('plugin-on'));
+  assert.ok(document.querySelector('.app-header').classList.contains('plugin-on'));
 
   popup.input.click();
   assert.deepEqual(popup.syncWrites[1], { pluginSwitch: false });
   popup.completeWrite();
   assert.equal(popup.store.pluginSwitch, false);
-  assert.ok(document.querySelector('.upper-part').classList.contains('plugin-off'));
+  assert.ok(document.querySelector('.app-header').classList.contains('plugin-off'));
 
   // 存储失败必须回退开关和背景，并让用户重试。
   popup.input.click();
@@ -88,22 +88,45 @@ async function loadPopup({ settings = {}, failLoad = false, deferLoad = false } 
   assert.equal(popup.store.pluginSwitch, false);
   assert.equal(popup.input.checked, false);
   assert.equal(popup.input.disabled, false);
-  assert.ok(document.querySelector('.upper-part').classList.contains('plugin-off'));
-  assert.equal(document.querySelector('.save').textContent, '切换失败');
+  assert.ok(document.querySelector('.app-header').classList.contains('plugin-off'));
+  assert.equal(document.getElementById('saveStatus').textContent, '切换失败');
   popup.input.click();
   popup.completeWrite();
   assert.equal(popup.store.pluginSwitch, true);
 
+  // 模式卡片立即单独保存，不算作未保存的更改。
+  const status = document.getElementById('saveStatus');
+  assert.notEqual(status.dataset.state, 'dirty');
+  document.querySelector('input[name="translationMode"][value="general"]').click();
+  assert.deepEqual(popup.syncWrites.at(-1), { translationMode: 'general' });
+  popup.completeWrite();
+  assert.equal(popup.store.translationMode, 'general');
+  assert.equal(status.dataset.state, 'saved');
+
+  // 普通设置的编辑会提示未保存，保存成功后提示消失。
+  const borderWidth = document.getElementById('borderWidth');
+  borderWidth.value = '3px';
+  borderWidth.dispatchEvent(new popup.window.Event('input', { bubbles: true }));
+  assert.equal(status.dataset.state, 'dirty');
+
   // 其他设置仍可保存，不重复写入已即时保存的总开关，也不改变其背景。
-  document.getElementById('sentenceThreshold').value = '80';
   document.getElementById('settingsForm').dispatchEvent(new popup.window.Event('submit', { cancelable: true }));
   const manualWrite = popup.syncWrites.at(-1);
   assert.equal(Object.hasOwn(manualWrite, 'pluginSwitch'), false);
   assert.equal(Object.hasOwn(manualWrite, 'deepseekApiKey'), false);
-  assert.equal(manualWrite.sentenceThreshold, 80);
+  assert.equal(manualWrite.borderWidth, '3px');
+  assert.equal(Object.hasOwn(manualWrite, 'translationMode'), false, 'auto-saved mode is not resubmitted');
+  assert.equal(Object.keys(manualWrite).some(key => /^tab|^panel/.test(key)), false);
   assert.deepEqual(popup.localWrites, [{ deepseekApiKey: 'unsaved-key' }]);
   popup.completeWrite();
-  assert.ok(document.querySelector('.upper-part').classList.contains('plugin-on'));
+  assert.equal(status.dataset.state, 'saved');
+  assert.ok(document.querySelector('.app-header').classList.contains('plugin-on'));
+
+  // 标签页一次只显示一个面板。
+  document.getElementById('tabStyle').click();
+  assert.equal(document.getElementById('panelStyle').hidden, false);
+  assert.equal(document.getElementById('panelReading').hidden, true);
+  assert.equal(document.getElementById('tabStyle').getAttribute('aria-selected'), 'true');
   popup.dom.window.close();
 
   // 关闭再打开，以及后台不可用时的存储回退，都应恢复已保存的开启状态。
@@ -111,10 +134,15 @@ async function loadPopup({ settings = {}, failLoad = false, deferLoad = false } 
     const reopened = await loadPopup({ settings: popup.store, failLoad });
     assert.equal(reopened.input.checked, true);
     assert.equal(reopened.input.disabled, false);
+    assert.equal(
+      reopened.window.document.querySelector('input[name="translationMode"]:checked').value,
+      'general',
+      'the saved translation mode should be selected on reopen'
+    );
     reopened.input.click();
     reopened.completeWrite('storage unavailable');
     assert.equal(reopened.input.checked, true, 'failed OFF writes should also restore the previous state');
-    assert.ok(reopened.window.document.querySelector('.upper-part').classList.contains('plugin-on'));
+    assert.ok(reopened.window.document.querySelector('.app-header').classList.contains('plugin-on'));
     reopened.dom.window.close();
   }
   console.log('popup tests passed');

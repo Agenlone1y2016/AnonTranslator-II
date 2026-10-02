@@ -7,228 +7,353 @@
     <link rel="stylesheet" href="css/popup.css" />
   </head>
   <body>
-    <form id="settingsForm">
-      <div class="upper-part">
-        <label class="switch" title="点击立即生效并自动保存">
-          <input type="checkbox" id="pluginSwitch" aria-label="启用 AnonTranslator II（自动保存）" disabled>
-          <span class="slider round">
-            <span class="on">ON</span>
-            <span class="off">OFF</span>
+    <form id="settingsForm" class="app">
+      <header class="app-header plugin-off">
+        <img class="app-icon" src="img/icon48.png" alt="" width="40" height="40" />
+        <div class="app-title">
+          <h1>AnonTranslator II</h1>
+          <p class="app-meta"><span id="extensionVersion"></span> · by raindrop213</p>
+        </div>
+        <label class="power" title="点击立即生效并自动保存">
+          <span id="pluginState" class="power-state">读取中</span>
+          <span class="switch">
+            <input type="checkbox" id="pluginSwitch" role="switch" aria-label="启用 AnonTranslator II（自动保存）" disabled>
+            <span class="switch-track" aria-hidden="true"></span>
           </span>
         </label>
-        <button class="save" type="submit" aria-label="保存设置" aria-live="polite">save</button>
-        <p class="text-h1"><span id="extensionVersion"></span></p>
-        <p class="text-s1">By: raindrop213</p>
+      </header>
+
+      <div id="translationMode" class="mode" role="radiogroup" aria-label="翻译模式（自动保存）">
+        <label class="mode-option">
+          <input type="radio" name="translationMode" value="novel" checked>
+          <span class="mode-card">
+            <span class="mode-name">日语轻小说</span>
+            <span class="mode-desc">点击段落 · 译文 + 假名</span>
+          </span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="translationMode" value="general">
+          <span class="mode-card">
+            <span class="mode-name">常规翻译</span>
+            <span class="mode-desc">选中文本 · 点按钮翻译</span>
+          </span>
+        </label>
       </div>
 
-      <div class="translation-mode-setting">
-        <label for="translationMode">翻译模式</label>
-        <select id="translationMode" aria-label="选择翻译模式">
-          <option value="novel">日语轻小说</option>
-          <option value="general">常规翻译</option>
-        </select>
-        <p id="translationModeHint" class="translation-mode-hint" aria-live="polite"></p>
-      </div>
+      <nav class="tabbar" role="tablist" aria-label="设置分类">
+        <button type="button" role="tab" id="tabReading" aria-controls="panelReading" aria-selected="true">阅读</button>
+        <button type="button" role="tab" id="tabTranslator" aria-controls="panelTranslator" aria-selected="false" tabindex="-1">翻译</button>
+        <button type="button" role="tab" id="tabStyle" aria-controls="panelStyle" aria-selected="false" tabindex="-1">样式</button>
+        <button type="button" role="tab" id="tabGuide" aria-controls="panelGuide" aria-selected="false" tabindex="-1">说明</button>
+      </nav>
 
-      <div class="tabs">
-        <!-- Copy Tab -->
-        <input type="radio" id="tab1" name="tab" class="tab" checked />
-        <div class="tab-header">
-          <label for="tab1" class="tab-label">Copy</label>
-          <input id="copy" class="cmn-toggle cmn-toggle-round-flat" type="checkbox">
-          <label for="copy" aria-label="启用复制"></label>
-        </div>
-        <div class="tab-content">
-          <div class="settings">
-            <label>Ignore Furigana: 忽略振假名 <input type="checkbox" id="ignoreFurigana" /></label>
-          </div>
-          <div class="settings">
-            <label>Copy Toast: 显示复制提示 <input type="checkbox" id="showCopyContent" /></label>
-          </div>
-          <div class="settings">
-            <label>Extract Picture: 点击提取图片 <input type="checkbox" id="extraImage" /></label>
-          </div>
-          <div class="settings">
-            <label for="symbolPairs">Paragraph Symbol Pairs: 忽略首尾符号对</label>
-            <input type="text" id="symbolPairs" />
-          </div>
-          <div class="settings">
-            <label for="sentenceDelimiters">Sentence Delimiters: 断句符号</label>
-            <input type="text" id="sentenceDelimiters" />
-          </div>
-          <div class="settings">
-            <label for="sentenceThreshold">Segmentation Threshold: 断句字数阈值</label>
-            <input type="number" id="sentenceThreshold" min="1" step="1" />
-          </div>
-        </div>
-
-        <!-- Translator Tab -->
-        <input type="radio" id="tab2" name="tab" class="tab" />
-        <div class="tab-header">
-          <label for="tab2" class="tab-label">Translator</label>
-        </div>
-        <div class="tab-content">
-          <div class="settings">
-            <label>Cache Translation: 保存翻译结果 <input type="checkbox" id="translationCache" /></label>
-          </div>
-          <div class="settings">
-            <label for="translationCacheDays">Cache Duration: 保存多久</label>
-            <select id="translationCacheDays">
-              <option value="7">7 天</option>
-              <option value="30">30 天</option>
-              <option value="90">90 天</option>
-              <option value="180">180 天</option>
-              <option value="365">1 年</option>
-              <option value="0">永久保留</option>
-            </select>
-          </div>
-          <div class="settings">
-            <button type="button" id="clearTranslationCache" class="clear-cache">Clear Cache: 清除已存译文</button>
-          </div>
-
-          <input type="checkbox" id="tabGoogle" name="translatorTab" class="tab" checked />
-          <div class="tab-header tab-header-color">
-            <label for="tabGoogle" class="tab-label">Google</label>
-            <input id="google" class="cmn-toggle cmn-toggle-round-flat" type="checkbox">
-            <label for="google" aria-label="启用 Google 翻译"></label>
-          </div>
-          <div class="tab-content">
-            <div class="settings">
-              <label>Google Color: <input type="color" id="googleColor" /></label>
-            </div>
-            <div class="settings">
-              <label for="googleFrom">From:</label>
-              <select id="googleFrom">
-                <option value="auto">auto</option>
-                <option value="ja">ja</option>
-                <option value="zh-CN">zh</option>
-                <option value="zh-TW">cht</option>
-                <option value="en">en</option>
-                <option value="ko">ko</option>
-              </select>
-            </div>
-            <div class="settings">
-              <label for="googleTo">To:</label>
-              <select id="googleTo">
-                <option value="zh-CN">zh</option>
-                <option value="zh-TW">cht</option>
-                <option value="ja">ja</option>
-                <option value="en">en</option>
-                <option value="ko">ko</option>
-              </select>
-            </div>
-          </div>
-
-          <input type="checkbox" id="tabDeepSeek" name="translatorTab" class="tab" />
-          <div class="tab-header tab-header-color">
-            <label for="tabDeepSeek" class="tab-label">DeepSeek</label>
-            <input id="deepseek" class="cmn-toggle cmn-toggle-round-flat" type="checkbox">
-            <label for="deepseek" aria-label="启用 DeepSeek 翻译"></label>
-          </div>
-          <div class="tab-content">
-            <div class="settings">
-              <label>DeepSeek Color: <input type="color" id="deepseekColor" /></label>
-            </div>
-            <div class="settings">
-              <label for="deepseekApiKey">API Key:</label>
-              <input
-                type="password"
-                id="deepseekApiKey"
-                placeholder="sk-..."
-                autocomplete="new-password"
-                spellcheck="false"
-              />
-              <p class="text-s2">密钥仅保存在本机，不会通过 Chrome Sync 同步。</p>
-            </div>
-            <div class="settings">
-              <label for="deepseekModel">Model:</label>
-              <select id="deepseekModel">
-                <option value="deepseek-v4-flash">deepseek-v4-flash</option>
-                <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-              </select>
-            </div>
-            <div class="settings">
-              <label for="deepseekFrom">From:</label>
-              <select id="deepseekFrom">
-                <option value="auto">auto</option>
-                <option value="ja">ja</option>
-                <option value="zh-CN">zh</option>
-                <option value="zh-TW">cht</option>
-                <option value="en">en</option>
-                <option value="ko">ko</option>
-              </select>
-            </div>
-            <div class="settings">
-              <label for="deepseekTo">To:</label>
-              <select id="deepseekTo">
-                <option value="zh-CN">zh</option>
-                <option value="zh-TW">cht</option>
-                <option value="ja">ja</option>
-                <option value="en">en</option>
-                <option value="ko">ko</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <!-- Style Tab -->
-        <input type="radio" id="tab3" name="tab" class="tab" />
-        <div class="tab-header">
-          <label for="tab3" class="tab-label">Style</label>
-        </div>
-        <div class="tab-content">
-          <div class="settings">
-            <label>Border Width: 框宽度<input type="text" id="borderWidth" /></label>
-          </div>
-          <div class="settings">
-            <label>Border Style: 框样式
-              <select id="borderStyle">
-                <option value="none">None</option>
-                <option value="solid">Solid</option>
-                <option value="dotted">Dotted</option>
-                <option value="dashed">Dashed</option>
-                <option value="double">Double</option>
-                <option value="groove">Groove</option>
-                <option value="ridge">Ridge</option>
-                <option value="inset">Inset</option>
-                <option value="outset">Outset</option>
-              </select>
+      <main class="panels">
+        <!-- 阅读 -->
+        <section id="panelReading" class="panel" role="tabpanel" aria-labelledby="tabReading">
+          <h2 class="group-title">复制</h2>
+          <div class="card">
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">点击段落复制</span>
+                <span class="row-desc">日语轻小说模式下，左键点击段落复制原文</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="copy" role="switch">
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">忽略振假名</span>
+                <span class="row-desc">复制带注音的字：开 → 漢字，关 → 漢字(かんじ)</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="ignoreFurigana" role="switch">
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">显示复制提示</span>
+                <span class="row-desc">复制成功后在页面左下角显示「已复制」</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="showCopyContent" role="switch">
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
             </label>
           </div>
-          <div class="settings">
-            <label>Border Radius: 框圆角<input type="text" id="borderRadius" /></label>
-          </div>
-          <div class="settings">
-            <label>Free Border Color: 预选框 <input type="color" id="freeBorderColor"/></label>
-          </div>
-          <div class="settings">
-            <label>Selected Border Color: 激活框 <input type="color" id="selectedBorderColor"/></label>
-          </div>
-          <div class="settings">
-            <label>Selected Sentence Color: 预选句子 <input type="color" id="sentenceColor"/></label>
-          </div>
-        </div>
 
-        <!-- Guide Tab -->
-        <input type="radio" id="tab4" name="tab" class="tab" />
-        <div class="tab-header">
-          <label for="tab4" class="tab-label">Guide</label>
-        </div>
-        <div class="tab-content">
-          <h2>使用说明</h2>
-          <ul class="custom-list">
-            <li>日语轻小说模式：左键点击文本段落进行复制和翻译。</li>
-            <li>日语轻小说模式启用 DeepSeek 时，一次请求同时显示译文和词语级假名原文行。</li>
-            <li>常规翻译模式：手动选中任意网页文本，再点击选区旁的翻译按钮。</li>
-            <li>常规翻译只显示译文，不标注假名，也不会提示或接管段落点击。</li>
-            <li>点击翻译结果旁的小三角：展开或收起该段的假名标注和译文。</li>
-            <li>启用保存翻译结果后，刷新页面再点击相同段落会优先读取本机缓存。</li>
-            <li>Translator 里的 Clear Cache 按钮可随时一键清除本机已保存的译文。</li>
-            <li>右键点击高亮句子：复制该句。</li>
-          </ul>
-          <p>DeepSeek API Key 可在 <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek Platform↗</a> 创建。</p>
-        </div>
-      </div>
+          <h2 class="group-title">图片</h2>
+          <div class="card">
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">点击提取图片</span>
+                <span class="row-desc">点击网页图片时在新标签页打开原图</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="extraImage" role="switch">
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <!-- 翻译 -->
+        <section id="panelTranslator" class="panel" role="tabpanel" aria-labelledby="tabTranslator" hidden>
+          <h2 class="group-title">翻译引擎</h2>
+
+          <div id="engineGoogle" class="card engine">
+            <label class="row engine-head">
+              <span class="engine-dot" aria-hidden="true"></span>
+              <span class="row-text">
+                <span class="row-title">Google 翻译</span>
+                <span class="row-desc">免费，无需配置</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="google" class="engine-toggle" role="switch" aria-label="启用 Google 翻译">
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <div class="engine-body">
+              <div class="field">
+                <span class="row-title">语言</span>
+                <div class="lang-pair">
+                  <select id="googleFrom" class="input" aria-label="Google 源语言">
+                    <option value="auto">自动检测</option>
+                    <option value="ja">日语</option>
+                    <option value="zh-CN">简体中文</option>
+                    <option value="zh-TW">繁体中文</option>
+                    <option value="en">英语</option>
+                    <option value="ko">韩语</option>
+                  </select>
+                  <span class="lang-arrow" aria-hidden="true">→</span>
+                  <select id="googleTo" class="input" aria-label="Google 目标语言">
+                    <option value="zh-CN">简体中文</option>
+                    <option value="zh-TW">繁体中文</option>
+                    <option value="ja">日语</option>
+                    <option value="en">英语</option>
+                    <option value="ko">韩语</option>
+                  </select>
+                </div>
+              </div>
+              <label class="row">
+                <span class="row-text">
+                  <span class="row-title">译文颜色</span>
+                  <span class="row-desc engine-sample">这是一行译文示例</span>
+                </span>
+                <input type="color" id="googleColor" class="swatch" />
+              </label>
+            </div>
+          </div>
+
+          <div id="engineDeepSeek" class="card engine">
+            <label class="row engine-head">
+              <span class="engine-dot" aria-hidden="true"></span>
+              <span class="row-text">
+                <span class="row-title">DeepSeek</span>
+                <span class="row-desc">需要 API Key，可同时标注假名</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="deepseek" class="engine-toggle" role="switch" aria-label="启用 DeepSeek 翻译">
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <div class="engine-body">
+              <div class="field">
+                <label class="row-text" for="deepseekApiKey">
+                  <span class="row-title">API Key</span>
+                </label>
+                <input
+                  type="password"
+                  id="deepseekApiKey"
+                  class="input"
+                  placeholder="sk-..."
+                  autocomplete="new-password"
+                  spellcheck="false"
+                />
+                <p class="field-note">
+                  仅保存在本机，不会通过 Chrome Sync 同步 ·
+                  <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">获取密钥 ↗</a>
+                </p>
+              </div>
+              <div class="row">
+                <label class="row-text" for="deepseekModel">
+                  <span class="row-title">模型</span>
+                </label>
+                <select id="deepseekModel" class="input input-inline">
+                  <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                  <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                </select>
+              </div>
+              <div class="field">
+                <span class="row-title">语言</span>
+                <div class="lang-pair">
+                  <select id="deepseekFrom" class="input" aria-label="DeepSeek 源语言">
+                    <option value="auto">自动检测</option>
+                    <option value="ja">日语</option>
+                    <option value="zh-CN">简体中文</option>
+                    <option value="zh-TW">繁体中文</option>
+                    <option value="en">英语</option>
+                    <option value="ko">韩语</option>
+                  </select>
+                  <span class="lang-arrow" aria-hidden="true">→</span>
+                  <select id="deepseekTo" class="input" aria-label="DeepSeek 目标语言">
+                    <option value="zh-CN">简体中文</option>
+                    <option value="zh-TW">繁体中文</option>
+                    <option value="ja">日语</option>
+                    <option value="en">英语</option>
+                    <option value="ko">韩语</option>
+                  </select>
+                </div>
+              </div>
+              <label class="row">
+                <span class="row-text">
+                  <span class="row-title">译文颜色</span>
+                  <span class="row-desc engine-sample">这是一行译文示例</span>
+                </span>
+                <input type="color" id="deepseekColor" class="swatch" />
+              </label>
+            </div>
+          </div>
+
+          <h2 class="group-title">缓存</h2>
+          <div class="card">
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">保存翻译结果</span>
+                <span class="row-desc">刷新页面后优先读取本机缓存</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="translationCache" role="switch">
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <div class="row">
+              <label class="row-text" for="translationCacheDays">
+                <span class="row-title">保存时长</span>
+              </label>
+              <select id="translationCacheDays" class="input input-inline">
+                <option value="7">7 天</option>
+                <option value="30">30 天</option>
+                <option value="90">90 天</option>
+                <option value="180">180 天</option>
+                <option value="365">1 年</option>
+                <option value="0">永久保留</option>
+              </select>
+            </div>
+            <div class="row">
+              <span class="row-text">
+                <span class="row-title">清除缓存</span>
+                <span class="row-desc">删除本机已保存的全部译文</span>
+              </span>
+              <button type="button" id="clearTranslationCache" class="btn btn-danger" aria-live="polite">清除</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 样式 -->
+        <section id="panelStyle" class="panel" role="tabpanel" aria-labelledby="tabStyle" hidden>
+          <h2 class="group-title">预览</h2>
+          <div id="stylePreview" class="card style-preview" aria-hidden="true">
+            <p class="preview-para preview-free" lang="ja">吾輩は猫である。名前はまだ無い。</p>
+            <p class="preview-para preview-selected" lang="ja">どこで生れたかとんと見当がつかぬ。<span class="preview-sentence">何でも薄暗いじめじめした所でニャーニャー泣いていた事だけは記憶している。</span></p>
+            <p class="preview-legend">
+              <span><i class="legend-free"></i>预选框</span>
+              <span><i class="legend-selected"></i>激活框</span>
+              <span><i class="legend-sentence"></i>句子高亮</span>
+            </p>
+          </div>
+
+          <h2 class="group-title">边框</h2>
+          <div class="card">
+            <div class="field-grid">
+              <div class="field">
+                <label class="row-title" for="borderWidth">宽度</label>
+                <input type="text" id="borderWidth" class="input" spellcheck="false" />
+              </div>
+              <div class="field">
+                <label class="row-title" for="borderStyle">样式</label>
+                <select id="borderStyle" class="input">
+                  <option value="none">None</option>
+                  <option value="solid">Solid</option>
+                  <option value="dotted">Dotted</option>
+                  <option value="dashed">Dashed</option>
+                  <option value="double">Double</option>
+                  <option value="groove">Groove</option>
+                  <option value="ridge">Ridge</option>
+                  <option value="inset">Inset</option>
+                  <option value="outset">Outset</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="row-title" for="borderRadius">圆角</label>
+                <input type="text" id="borderRadius" class="input" spellcheck="false" />
+              </div>
+            </div>
+          </div>
+
+          <h2 class="group-title">颜色</h2>
+          <div class="card">
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">预选框</span>
+                <span class="row-desc">鼠标悬停在段落上时</span>
+              </span>
+              <input type="color" id="freeBorderColor" class="swatch" />
+            </label>
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">激活框</span>
+                <span class="row-desc">点击翻译后的段落</span>
+              </span>
+              <input type="color" id="selectedBorderColor" class="swatch" />
+            </label>
+            <label class="row">
+              <span class="row-text">
+                <span class="row-title">句子高亮</span>
+                <span class="row-desc">鼠标所在句子的背景色</span>
+              </span>
+              <input type="color" id="sentenceColor" class="swatch" />
+            </label>
+          </div>
+        </section>
+
+        <!-- 说明 -->
+        <section id="panelGuide" class="panel" role="tabpanel" aria-labelledby="tabGuide" hidden>
+          <h2 class="group-title">日语轻小说模式</h2>
+          <div class="card guide">
+            <ul class="guide-list">
+              <li>左键点击文本段落，复制原文并翻译。</li>
+              <li>启用 DeepSeek 时，一次请求同时显示译文和词语级假名原文行。</li>
+              <li>右键点击高亮句子，复制该句。</li>
+            </ul>
+          </div>
+
+          <h2 class="group-title">常规翻译模式</h2>
+          <div class="card guide">
+            <ul class="guide-list">
+              <li>手动选中任意网页文本，再点击选区旁的翻译按钮。</li>
+              <li>只显示译文，不标注假名，也不会提示或接管段落点击。</li>
+            </ul>
+          </div>
+
+          <h2 class="group-title">小技巧</h2>
+          <div class="card guide">
+            <ul class="guide-list">
+              <li>点击翻译结果旁的小三角，展开或收起该段的假名标注和译文。</li>
+              <li>开启「保存翻译结果」后，刷新页面再点击相同段落会优先读取本机缓存。</li>
+              <li>「翻译」页的「清除缓存」可随时一键清除本机已保存的译文。</li>
+              <li>DeepSeek API Key 可在 <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer">DeepSeek Platform ↗</a> 创建。</li>
+            </ul>
+          </div>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <span id="saveStatus" class="save-status" role="status"></span>
+        <button class="save btn btn-primary" type="submit">保存设置</button>
+      </footer>
     </form>
 
     <script src="src/popup.js"></script>
