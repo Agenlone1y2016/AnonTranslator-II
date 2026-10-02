@@ -71,8 +71,8 @@ assert.ok(
 );
 
 assert.equal(defaults.translationMode, 'novel', 'existing users must default to novel mode');
-assert.match(popup, /<option value="novel">日语轻小说<\/option>/);
-assert.match(popup, /<option value="general">常规翻译<\/option>/);
+assert.match(popup, /<input type="radio" name="translationMode" value="novel"[^>]*>\s*<span class="mode-card">\s*<span class="mode-name">日语轻小说<\/span>/);
+assert.match(popup, /<input type="radio" name="translationMode" value="general"[^>]*>\s*<span class="mode-card">\s*<span class="mode-name">常规翻译<\/span>/);
 assert.match(
   popupScript,
   /chrome\.storage\.sync\.set\(\{ translationMode: normalizedMode \}/,

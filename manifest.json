@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AnonTranslator II",
-  "version": "1.3.9",
+  "version": "1.4.0",
   "author": "raindrop213",
   "description": "Japanese reading and general text translation with Google and DeepSeek",
   "icons": {

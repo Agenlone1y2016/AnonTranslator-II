@@ -258,8 +258,7 @@ function translationTextOf(tag) {
   // 句子拆分：点击后拆成句子 span，切换段落时还原原始节点且保留翻译。
   {
     const page = loadPage({
-      html: '<p id="s1">一文目。二文目。</p><p id="s2">別の段落。</p>',
-      settings: { sentenceThreshold: 4 }
+      html: '<p id="s1">一文目。二文目。</p><p id="s2">別の段落。</p>'
     });
     const s1 = page.document.getElementById('s1');
     const s2 = page.document.getElementById('s2');
@@ -283,6 +282,20 @@ function translationTextOf(tag) {
     );
     assert.ok(translationTextOf(s1).includes('译:'), 'translation preserved after switching paragraphs');
     assert.ok(translationTextOf(s2).includes('译:別の段落。'));
+    page.dom.window.close();
+  }
+
+  // 断句：连续标点、闭括号和空白归入前一句；「……。」と 引用不拆开。
+  {
+    const text = '「本当？」「うん。」そうか!?　次だ。「行こう。」と言った。……終わり';
+    const page = loadPage({ html: `<p id="s3">${text}</p>` });
+    const s3 = page.document.getElementById('s3');
+    click(page.window, s3);
+    await flush();
+    assert.deepEqual(
+      Array.from(s3.querySelectorAll('.anontranslator-sentence'), span => span.textContent),
+      ['「本当？」', '「うん。」', 'そうか!?　', '次だ。', '「行こう。」と言った。', '……終わり']
+    );
     page.dom.window.close();
   }
 

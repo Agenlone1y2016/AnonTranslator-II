@@ -3,7 +3,12 @@
 const TRANSLATION_TIMEOUT_MS = 15000;
 const DEEPSEEK_TIMEOUT_MS = 45000;
 const MAX_TRANSLATION_CHARACTERS = 20000;
-const DEEPSEEK_MODELS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
+// DeepSeek 于 2026-09-10 把 deepseek-v4-flash 更名为 deepseek-flash；不在列表中的旧名称改用默认模型。
+const DEFAULT_DEEPSEEK_MODEL = 'deepseek-flash';
+const DEEPSEEK_MODELS = new Set([DEFAULT_DEEPSEEK_MODEL, 'deepseek-v4-pro']);
+const KANJI_PATTERN = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF々〆ヶ]/;
+// 已改为内部处理、不再提供设置的旧配置项。
+const RETIRED_SETTINGS = ['symbolPairs', 'sentenceDelimiters', 'sentenceThreshold'];
 let defaultSettingsPromise = null;
 let toolbarStateRevision = 0;
 
@@ -60,7 +65,7 @@ function loadDefaultSettings() {
   return defaultSettingsPromise;
 }
 
-// 升级时补齐新增配置。
+// 升级时补齐新增配置、迁移已更名的模型，并清理已废弃的配置。
 chrome.runtime.onInstalled.addListener(() => {
   loadDefaultSettings().then(defaultSettings => {
     if (!defaultSettings) return;
@@ -71,14 +76,26 @@ chrome.runtime.onInstalled.addListener(() => {
         return;
       }
 
-      const missingSettings = Object.fromEntries(
+      const updatedSettings = Object.fromEntries(
         Object.entries(defaultSettings).filter(([key]) => savedSettings[key] === undefined)
       );
+      if (savedSettings.deepseekModel !== undefined && !DEEPSEEK_MODELS.has(savedSettings.deepseekModel)) {
+        updatedSettings.deepseekModel = DEFAULT_DEEPSEEK_MODEL;
+      }
 
-      if (Object.keys(missingSettings).length > 0) {
-        chrome.storage.sync.set(missingSettings, () => {
+      if (Object.keys(updatedSettings).length > 0) {
+        chrome.storage.sync.set(updatedSettings, () => {
           if (chrome.runtime.lastError) {
-            console.error('Error saving default settings:', chrome.runtime.lastError.message);
+            console.error('Error updating settings:', chrome.runtime.lastError.message);
+          }
+        });
+      }
+
+      const retiredKeys = RETIRED_SETTINGS.filter(key => savedSettings[key] !== undefined);
+      if (retiredKeys.length > 0) {
+        chrome.storage.sync.remove(retiredKeys, () => {
+          if (chrome.runtime.lastError) {
+            console.error('Error removing retired settings:', chrome.runtime.lastError.message);
           }
         });
       }
@@ -86,7 +103,7 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message !== 'object') {
     return false;
   }
@@ -111,10 +128,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(result => sendResponse({ ok: true, ...result }))
       .catch(error => {
         console.error(`[AnonTranslator II] ${translator} translation failed:`, error);
-        sendResponse({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
+        sendResponse({ ok: false, error: getErrorMessage(error) });
       });
     return true;
   }
@@ -329,7 +343,7 @@ async function deepseekTranslate(text, from, to, requestedModel, mode = 'novel')
 
   const model = DEEPSEEK_MODELS.has(requestedModel)
     ? requestedModel
-    : 'deepseek-v4-flash';
+    : DEFAULT_DEEPSEEK_MODEL;
   const sourceLanguage = getLanguageName(from, true);
   const targetLanguage = getLanguageName(to, false);
   const normalizedMode = mode === 'general' ? 'general' : 'novel';
@@ -485,7 +499,7 @@ function normalizeWordAnnotations(sourceText, rawAnnotations) {
     if (
       !surface ||
       !reading ||
-      !/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF々〆ヶ]/.test(surface) ||
+      !KANJI_PATTERN.test(surface) ||
       !/^[\u3040-\u309Fー]+$/.test(reading)
     ) {
       skipped += 1;
@@ -503,8 +517,8 @@ function normalizeWordAnnotations(sourceText, rawAnnotations) {
       start,
       end,
       reading,
-      singleKanji: surfacePoints.length === 1 &&
-        /^[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF々〆ヶ]$/.test(surface)
+      // 上面已确认 surface 含汉字，单字即单个汉字。
+      singleKanji: surfacePoints.length === 1
     });
     cursor = end;
   }
@@ -531,7 +545,7 @@ function normalizeWordAnnotations(sourceText, rawAnnotations) {
     warning = `有 ${skipped} 个 DeepSeek 读音无法与原文安全对齐，已自动跳过`;
   } else if (
     grouped.length === 0 &&
-    /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF々〆ヶ]/.test(sourceText)
+    KANJI_PATTERN.test(sourceText)
   ) {
     warning = 'DeepSeek 未返回可用的词语读音，已保留译文和原文行';
   }

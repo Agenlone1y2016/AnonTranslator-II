@@ -176,6 +176,7 @@ assert.throws(
     await evaluate("deepseekTranslate('General English text', 'auto', 'zh-CN', 'deepseek-v4-flash', 'general')")
   ));
   assert.equal(generalResult.translatedText, '常规译文');
+  assert.equal(capturedRequest.body.model, 'deepseek-flash', 'renamed model names fall back to deepseek-flash');
   assert.deepEqual(generalResult.furiganaAnnotations, []);
   assert.ok(capturedRequest.body.messages[0].content.includes('专业翻译'));
   assert.ok(!capturedRequest.body.messages[0].content.includes('振假名标注器'));
@@ -185,9 +186,30 @@ assert.throws(
     choices: [{ finish_reason: 'length', message: { content: '{}' } }]
   }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   await assert.rejects(
-    evaluate("deepseekTranslate('長文', 'ja', 'zh-CN', 'deepseek-v4-flash')"),
+    evaluate("deepseekTranslate('長文', 'ja', 'zh-CN', 'deepseek-flash')"),
     /输出达到长度上限/
   );
+
+  // 安装或升级时补齐缺失的默认值，并清理已改为内部处理的旧配置。
+  const syncSets = [];
+  const syncRemovals = [];
+  chrome.storage.sync.set = (values, callback) => { syncSets.push({ ...values }); callback?.(); };
+  chrome.storage.sync.remove = (keys, callback) => { syncRemovals.push([...keys]); callback?.(); };
+  context.fetch = async () => new Response(
+    JSON.stringify({ pluginSwitch: false, copy: true }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
+  const upgradeListener = installedListeners.find(listener => listener !== evaluate('restoreToolbarStatus'));
+  upgradeListener();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  storageReads.shift()({
+    pluginSwitch: true,
+    deepseekModel: 'deepseek-v4-flash',
+    sentenceThreshold: 50,
+    symbolPairs: '「」'
+  });
+  assert.deepEqual(syncSets, [{ copy: true, deepseekModel: 'deepseek-flash' }]);
+  assert.deepEqual(syncRemovals, [['symbolPairs', 'sentenceThreshold']]);
 
   console.log('background tests passed');
 })().catch(error => {
