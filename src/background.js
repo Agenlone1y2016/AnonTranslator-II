@@ -3,7 +3,9 @@
 const TRANSLATION_TIMEOUT_MS = 15000;
 const DEEPSEEK_TIMEOUT_MS = 45000;
 const MAX_TRANSLATION_CHARACTERS = 20000;
-const DEEPSEEK_MODELS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
+// DeepSeek 于 2026-09-10 把 deepseek-v4-flash 更名为 deepseek-flash；不在列表中的旧名称改用默认模型。
+const DEFAULT_DEEPSEEK_MODEL = 'deepseek-flash';
+const DEEPSEEK_MODELS = new Set([DEFAULT_DEEPSEEK_MODEL, 'deepseek-v4-pro']);
 const KANJI_PATTERN = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF々〆ヶ]/;
 // 已改为内部处理、不再提供设置的旧配置项。
 const RETIRED_SETTINGS = ['symbolPairs', 'sentenceDelimiters', 'sentenceThreshold'];
@@ -63,7 +65,7 @@ function loadDefaultSettings() {
   return defaultSettingsPromise;
 }
 
-// 升级时补齐新增配置，并清理已废弃的配置。
+// 升级时补齐新增配置、迁移已更名的模型，并清理已废弃的配置。
 chrome.runtime.onInstalled.addListener(() => {
   loadDefaultSettings().then(defaultSettings => {
     if (!defaultSettings) return;
@@ -74,14 +76,17 @@ chrome.runtime.onInstalled.addListener(() => {
         return;
       }
 
-      const missingSettings = Object.fromEntries(
+      const updatedSettings = Object.fromEntries(
         Object.entries(defaultSettings).filter(([key]) => savedSettings[key] === undefined)
       );
+      if (savedSettings.deepseekModel !== undefined && !DEEPSEEK_MODELS.has(savedSettings.deepseekModel)) {
+        updatedSettings.deepseekModel = DEFAULT_DEEPSEEK_MODEL;
+      }
 
-      if (Object.keys(missingSettings).length > 0) {
-        chrome.storage.sync.set(missingSettings, () => {
+      if (Object.keys(updatedSettings).length > 0) {
+        chrome.storage.sync.set(updatedSettings, () => {
           if (chrome.runtime.lastError) {
-            console.error('Error saving default settings:', chrome.runtime.lastError.message);
+            console.error('Error updating settings:', chrome.runtime.lastError.message);
           }
         });
       }
@@ -338,7 +343,7 @@ async function deepseekTranslate(text, from, to, requestedModel, mode = 'novel')
 
   const model = DEEPSEEK_MODELS.has(requestedModel)
     ? requestedModel
-    : 'deepseek-v4-flash';
+    : DEFAULT_DEEPSEEK_MODEL;
   const sourceLanguage = getLanguageName(from, true);
   const targetLanguage = getLanguageName(to, false);
   const normalizedMode = mode === 'general' ? 'general' : 'novel';

@@ -13,7 +13,7 @@
   "googleTo": "zh-CN",
   "deepseek": false,
   "deepseekColor": "#4D8DFF",
-  "deepseekModel": "deepseek-v4-flash",
+  "deepseekModel": "deepseek-flash",
   "deepseekFrom": "auto",
   "deepseekTo": "zh-CN",
   "borderWidth": "2px",
