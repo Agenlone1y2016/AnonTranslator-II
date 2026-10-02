@@ -33,6 +33,8 @@ git clone https://github.com/Agenlone1y2016/AnonTranslator-II.git
 
 然后在 Chrome 中加载克隆出来的文件夹。
 
+也可以在 [Releases](https://github.com/Agenlone1y2016/AnonTranslator-II/releases) 下载对应版本的 zip，解压后按上面的步骤加载。
+
 ### DeepSeek 配置
 
 1. 在 [DeepSeek Platform](https://platform.deepseek.com/) 创建 API Key。
@@ -41,14 +43,15 @@ git clone https://github.com/Agenlone1y2016/AnonTranslator-II.git
 
 当前支持的模型：
 
-- `deepseek-v4-flash`
+- `deepseek-flash`（默认）
 - `deepseek-v4-pro`
+
+DeepSeek 已于 2026-09-10 将 `deepseek-v4-flash` 更名为 `deepseek-flash`。更新到 v1.4.0 后，已保存的旧模型设置会自动切换为新名称。
 
 ### 使用方式
 
 1. 在弹窗顶部选择“日语轻小说”或“常规翻译”，切换会立即生效并自动保存。
-2. 日语轻小说模式： 左键点击段落进行复制和翻译；右键点击高亮句子进行复制。
-                  点击译文旁的小三角可折叠或展开；DeepSeek 会同时显示带假名标注的原文行。
+2. 日语轻小说模式：左键点击段落进行复制和翻译；右键点击高亮句子进行复制。点击译文旁的小三角可折叠或展开；DeepSeek 会同时显示带假名标注的原文行。
 3. 常规翻译模式：手动选中任意连续网页文本，点击选区旁的“译”按钮，在浮层中查看译文。
 4. 在「翻译」页开启「保存翻译结果」并选择「保存时长」，刷新页面后可复用之前的翻译结果；「清除缓存」按钮可随时清除本机已保存的译文。
 
